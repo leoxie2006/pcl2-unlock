@@ -30,7 +30,7 @@ PCL2 的「MC 下载功能已关闭」**只是被短路，并没有删除**。�
 
 ## 用法
 
-需要 .NET SDK 8 及以上（项目目标是 `net10.0`，改 `TargetFramework` 即可降级）。dnlib 纯托管，macOS / Linux / Windows 都能跑。
+需要 .NET SDK 8 及以上（项目目标是 `net10.0`，改 `TargetFramework` 即可降级）。dnlib 纯托管，跨平台均可运行。
 
 ```bash
 # 1. 构建
@@ -136,24 +136,9 @@ ilspycmd --list-resources PCL2.unlocked.exe             # 资源表与原版逐�
 
 ## 已知限制
 
-**必须放在盘符路径下运行。** PCL 的 `ModNet.LoaderDownload` 里有一处硬性检查：
-
-```csharp
-file.LocalPath = file.LocalPath.Replace("/", "\\");
-if (!file.LocalPath.Contains(":\\"))
-    throw new ArgumentException("输入的本地文件地址不正确：" + file.LocalPath);
-```
-
-所以路径形如 `\\Mac\Home\...`（Parallels / VMware 的 Mac 共享文件夹，或 Wine 的 UNC 路径）时，下载初始化必然失败——**这不是补丁的问题**，本体下载、资源下载都过不去。解法：
-
-1. 把 PCL 和 `.minecraft` 都放到虚拟机本地盘（`C:\PCL2\`），从本地盘启动；
-2. 或把共享文件夹映射成盘符：`net use X: \\Mac\Home`，再用 `X:\...` 启动；
-3. 或在 macOS 上直接用 Prism Launcher / 官方启动器等原生方案。
-
-其它：
-
-- `.rar` 整合包仍会按 PCL 原逻辑提示「请在解压后重新压缩为 zip」；
-- 补丁只恢复接线，不改下载源、不绕过版本校验，网络问题（例如 `maven.neoforged.net` 超时）照旧。
+- 补丁只按 PCL2 2.13.1 的代码结构编写，换版本请先 `--check`，定位不到目标代码时会中止并且不写出文件；
+- 只恢复入口接线，不改下载源、不改版本校验、不改变任何下载与安装逻辑；
+- 输出为新文件，原 exe 不受影响；补丁可重复执行，已解锁的部分会自动跳过。
 
 ## 许可
 
