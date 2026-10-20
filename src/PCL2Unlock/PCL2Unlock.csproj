@@ -13,7 +13,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 只做元数据/IL 改写，dnlib 在 macOS / Linux 上同样可用 -->
+    <!-- 只做元数据 / IL 改写 -->
     <PackageReference Include="dnlib" Version="4.4.0" />
   </ItemGroup>
 

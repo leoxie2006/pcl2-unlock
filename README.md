@@ -35,10 +35,11 @@ PCL2 的「MC 下载功能已关闭」**只是被短路，并没有删除**。�
 | .NET SDK **8 或更高** | 构建并运行补丁工具 | <https://dotnet.microsoft.com/download> |
 | dnlib 4.4.0 | 读写 .NET 元数据 / IL | NuGet 自动还原，无需手动安装 |
 | PCL2 2.13.1 原版 exe | 补丁输入 | 官方渠道下载，文件名通常是 `Plain Craft Launcher 2.exe` |
+| Windows PowerShell 5.1 | 运行一键脚本 | Windows 10 / 11 自带，无需安装 |
 | Git（可选） | 拉取本仓库 | <https://git-scm.com/downloads> |
 | ilspycmd（可选） | 反编译核对补丁结果 | `dotnet tool install --global ilspycmd` |
 
-验证环境：`dotnet --version` 应输出 `8.x` 及以上；首次构建会联网还原 dnlib。
+在 CMD 或 PowerShell 里执行 `dotnet --version`，能输出 `8.x` 及以上即可；首次构建会联网还原 dnlib。
 
 ## 快速开始
 
@@ -54,9 +55,12 @@ PCL2 的「MC 下载功能已关闭」**只是被短路，并没有删除**。�
 
 校验：
 
-```bash
-shasum -a 256 dist/PCL2.2.13.1.unlocked.exe              # macOS / Linux
-certutil -hashfile dist\PCL2.2.13.1.unlocked.exe SHA256  # Windows CMD
+```bat
+certutil -hashfile dist\PCL2.2.13.1.unlocked.exe SHA256
+```
+
+```powershell
+Get-FileHash dist\PCL2.2.13.1.unlocked.exe -Algorithm SHA256
 ```
 
 哈希一致后，把它改名为 `Plain Craft Launcher 2.exe` 覆盖原文件，或直接双击运行即可。
@@ -64,13 +68,11 @@ certutil -hashfile dist\PCL2.2.13.1.unlocked.exe SHA256  # Windows CMD
 
 ### 方式 B：一键脚本
 
-```bash
-# macOS / Linux / WSL / Git Bash
-./scripts/unlock.sh "Plain Craft Launcher 2.exe"
-
-# Windows PowerShell
-.\scripts\unlock.ps1 -InputExe "D:\PCL2\Plain Craft Launcher 2.exe"
+```powershell
+.\scripts\unlock.ps1 "D:\PCL2\Plain Craft Launcher 2.exe"
 ```
+
+或者直接双击 `scripts\unlock.bat`（内部同样调用 `unlock.ps1`，不用改执行策略）。
 
 不传参数时，脚本会自动在当前目录和项目根目录里找 `Plain Craft Launcher 2.exe` / `PCL2.exe`，然后依次：
 
@@ -80,32 +82,34 @@ certutil -hashfile dist\PCL2.2.13.1.unlocked.exe SHA256  # Windows CMD
 4. 对输出文件跑一次 `--check`，确认三处都已解锁；
 5. 打印 SHA-256 与输出路径。
 
-两个脚本都支持把补丁工具的其余参数透传下去：
+脚本（`.ps1` 与 `.bat`）支持把补丁工具的其余参数透传下去：
 
-```bash
-./scripts/unlock.sh PCL2.exe --only 1             # 只补「本体下载」
-./scripts/unlock.sh PCL2.exe -o ~/PCL2.new.exe    # 自定义输出路径
-./scripts/unlock.sh PCL2.exe --check              # 只检查，不写文件
-
-.\scripts\unlock.ps1 -Only 1
-.\scripts\unlock.ps1 -Output D:\PCL2\PCL2.new.exe
-.\scripts\unlock.ps1 -Check
+```powershell
+.\scripts\unlock.ps1 "D:\PCL2\PCL2.exe" -Only 1              # 只补「本体下载」
+.\scripts\unlock.ps1 "D:\PCL2\PCL2.exe" -Output D:\PCL2\PCL2.new.exe
+.\scripts\unlock.ps1 "D:\PCL2\PCL2.exe" -Check               # 只检查，不写文件
 ```
+
+```bat
+scripts\unlock.bat "D:\PCL2\PCL2.exe" -Only 1
+```
+
+如果 PowerShell 报「禁止运行脚本」，改用 `powershell -ExecutionPolicy Bypass -File .\scripts\unlock.ps1`，或者直接用 `.bat`。
 
 ### 方式 C：手动命令
 
-```bash
+```powershell
 # 1. 构建
-dotnet build src/PCL2Unlock
+dotnet build src\PCL2Unlock
 
 # 2. 先确认版本匹配（只读；已解锁返回 0，未解锁返回 2，版本不匹配返回 3）
-dotnet run --project src/PCL2Unlock -- "Plain Craft Launcher 2.exe" --check
+dotnet run --project src\PCL2Unlock -- "D:\PCL2\Plain Craft Launcher 2.exe" --check
 
 # 3. 打补丁，默认输出 <输入名>.unlocked.exe
-dotnet run --project src/PCL2Unlock -- "Plain Craft Launcher 2.exe"
+dotnet run --project src\PCL2Unlock -- "D:\PCL2\Plain Craft Launcher 2.exe"
 
 # 4. 复核输出
-dotnet run --project src/PCL2Unlock -- "Plain Craft Launcher 2.unlocked.exe" --check
+dotnet run --project src\PCL2Unlock -- "D:\PCL2\Plain Craft Launcher 2.unlocked.exe" --check
 ```
 
 ## 参数
@@ -116,6 +120,8 @@ dotnet run --project src/PCL2Unlock -- "Plain Craft Launcher 2.unlocked.exe" --c
 | `--only 1,2,3` | 只跑指定补丁：1 = 本体下载，2 = 整合包分派，3 = 整合包按钮 |
 | `-c, --check` | 只检查是否已解锁，不写文件 |
 | `-h, --help` | 显示帮助 |
+
+脚本参数名对应关系：`.ps1` / `.bat` 用 `-InputExe`、`-Output`、`-Only`、`-Check`，工具本身用 `--output`、`--only`、`--check`。
 
 退出码：`0` 成功 / 已解锁，`1` 参数或文件问题，`2` 检查发现未解锁，`3` 找不到目标代码（版本不匹配，此时不会写出文件）。
 
@@ -188,7 +194,7 @@ public static void ModpackInstall()
 
 ## 验证
 
-```bash
+```bat
 ilspycmd -t PCL.PageDownloadInstall PCL2.unlocked.exe   # LoaderInit 里应是 ModDownload.DlClientListLoader
 ilspycmd -t PCL.ModModpack PCL2.unlocked.exe            # 应有 ModpackInstallDispatch；无参重载应是 SelectFile + ModpackInstall(text)
 ilspycmd --list-resources PCL2.unlocked.exe             # 资源表与原版逐条一致

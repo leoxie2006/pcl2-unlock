@@ -21,5 +21,6 @@ decompiled/
 PCL/
 .minecraft/
 
-# macOS
-.DS_Store
+# 资源管理器缩略图
+Thumbs.db
+desktop.ini
