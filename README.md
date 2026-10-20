@@ -1,216 +1,56 @@
 # pcl2-unlock
 
-PCL2 的「MC 下载功能已关闭」**只是被短路，并没有删除**。这个工具用 [dnlib](https://github.com/0xd4d/dnlib) 直接改写 IL，把三处拦截点补回去：
+PCL2 的「MC 下载功能已关闭」只是把入口短路了，功能本身还在。这个工具用 dnlib 改写 IL，恢复三处入口：**本体下载**（含 Forge / NeoForge / Fabric / LiteLoader / OptiFine）和**整合包安装**。
 
-- 「下载 → 游戏本体」的版本列表重新可用，进而能正常安装原版 / Forge / NeoForge / Fabric / LiteLoader / OptiFine；
-- 「安装整合包」按钮重新弹出文件选择框，CurseForge / Modrinth / HMCL / MMC / MCBBS / 启动器包 / 纯压缩包都能装。
+仅针对 **PCL2 2.13.1（2.99.0.0(413)）** 验证，其它版本先跑 `--check` 看是否匹配。非官方项目。
 
-> 在 **PCL2 2.13.1（内部版本 2.99.0.0(413)）** 上定位并验证。其它版本未验证，先跑 `--check` 看是否匹配。
-> 非官方项目，与 PCL 开发者无关。
+## 用法
 
-## 被改成了什么样
+### 1. 直接用现成的
 
-官方在更新里把下载入口关掉，提示语是：
+`dist/PCL2.2.13.1.unlocked.exe` 是打好补丁的成品（SHA-256 `7e00108c92b92cabfcf70105cf3f40426f706ce0fc2e2da1afb5e5ef1e3b724c`），改名成 `Plain Craft Launcher 2.exe` 覆盖原文件即可。
 
-```
-为遵守相关法律法规，PCL 暂时不再提供 MC 下载功能，非常抱歉 qwq……
-```
-
-反编译后可以看到，下载/安装的实现一行没少，只是三个入口被短路：
-
-| # | 位置 | 现状 | 后果 |
-|---|---|---|---|
-| 1 | `PageDownloadInstall.LoaderInit()` | 真加载器 `ModDownload.DlClientListLoader` 被换成名叫「关闭下载」的假 `LoaderTask`，其 lambda 直接 `throw` | 进下载页只看到错误页 |
-| 2 | `ModModpack.ModpackInstall(File, InstanceName, Logo)` | 完整解析 zip、识别出包类型（局部变量 `num`）之后，末尾无条件 `throw`，原来的「按 `num` 分派」被整段删掉 | 拖放 / 双击整合包弹红字 |
-| 3 | `ModModpack.ModpackInstall()` | 方法体只剩一句 `ModMain.Hint("为遵守相关法律法规……")` | 「安装整合包」按钮只弹红字 |
-
-底下这些全部完好，所以补丁只是「重新接线」：
-
-`ModDownload.DlClientListLoader`（仍请求 `launchermeta.mojang.com` / BMCLAPI 镜像）、`ModDownloadLib.McDownloadClientLoader`、`McInstallLoadersGet`、`McInstallStart`、`McInstallCommit`、`McDownloadForgelikeLoader`、`ShowMinecraftVersionList`、`BtnStart_Click`、7 个 `InstallPack*`。
-
-## 需要的工具
-
-| 工具 | 用途 | 获取方式 |
-|---|---|---|
-| .NET SDK **8 或更高** | 构建并运行补丁工具 | <https://dotnet.microsoft.com/download> |
-| dnlib 4.4.0 | 读写 .NET 元数据 / IL | NuGet 自动还原，无需手动安装 |
-| PCL2 2.13.1 原版 exe | 补丁输入 | 官方渠道下载，文件名通常是 `Plain Craft Launcher 2.exe` |
-| Windows PowerShell 5.1 | 运行一键脚本 | Windows 10 / 11 自带，无需安装 |
-| Git（可选） | 拉取本仓库 | <https://git-scm.com/downloads> |
-| ilspycmd（可选） | 反编译核对补丁结果 | `dotnet tool install --global ilspycmd` |
-
-在 CMD 或 PowerShell 里执行 `dotnet --version`，能输出 `8.x` 及以上即可；首次构建会联网还原 dnlib。
-
-## 快速开始
-
-三种方式任选其一。**补丁生成的是新文件，原 exe 不会被修改**，但用之前仍建议先备份原 exe。
-
-### 方式 A：直接用已经解锁好的文件
-
-`dist/` 里放了一份由 PCL2 2.13.1 原版打好全部三处补丁的成品：
-
-| 文件 | 大小 | SHA-256 |
-|---|---|---|
-| `dist/PCL2.2.13.1.unlocked.exe` | 5,972,992 字节 | `7e00108c92b92cabfcf70105cf3f40426f706ce0fc2e2da1afb5e5ef1e3b724c` |
-
-校验：
-
-```bat
-certutil -hashfile dist\PCL2.2.13.1.unlocked.exe SHA256
-```
-
-```powershell
-Get-FileHash dist\PCL2.2.13.1.unlocked.exe -Algorithm SHA256
-```
-
-哈希一致后，把它改名为 `Plain Craft Launcher 2.exe` 覆盖原文件，或直接双击运行即可。
-这份成品对应 PCL2 **2.13.1（2.99.0.0(413)）**；版本不一致请用方式 B / C 现打一份。
-
-### 方式 B：一键脚本
+### 2. 跑脚本
 
 ```powershell
 .\scripts\unlock.ps1 "D:\PCL2\Plain Craft Launcher 2.exe"
 ```
 
-或者直接双击 `scripts\unlock.bat`（内部同样调用 `unlock.ps1`，不用改执行策略）。
-
-不传参数时，脚本会自动在当前目录和项目根目录里找 `Plain Craft Launcher 2.exe` / `PCL2.exe`，然后依次：
-
-1. 检查 `dotnet` 是否存在、版本是否够用；
-2. `dotnet build` 构建补丁工具（首次会还原 dnlib）；
-3. 运行补丁，输出到 `dist/<输入名>.unlocked.exe`；
-4. 对输出文件跑一次 `--check`，确认三处都已解锁；
-5. 打印 SHA-256 与输出路径。
-
-脚本（`.ps1` 与 `.bat`）支持把补丁工具的其余参数透传下去：
+或双击 `scripts\unlock.bat`。脚本会构建、打补丁到 `dist\`、复核并打印 SHA-256。
 
 ```powershell
-.\scripts\unlock.ps1 "D:\PCL2\PCL2.exe" -Only 1              # 只补「本体下载」
-.\scripts\unlock.ps1 "D:\PCL2\PCL2.exe" -Output D:\PCL2\PCL2.new.exe
-.\scripts\unlock.ps1 "D:\PCL2\PCL2.exe" -Check               # 只检查，不写文件
+.\scripts\unlock.ps1 "D:\PCL2\PCL2.exe" -Only 1    # 只补本体下载
+.\scripts\unlock.ps1 "D:\PCL2\PCL2.exe" -Check     # 只检查
 ```
 
-```bat
-scripts\unlock.bat "D:\PCL2\PCL2.exe" -Only 1
-```
-
-如果 PowerShell 报「禁止运行脚本」，改用 `powershell -ExecutionPolicy Bypass -File .\scripts\unlock.ps1`，或者直接用 `.bat`。
-
-### 方式 C：手动命令
+### 3. 手动
 
 ```powershell
-# 1. 构建
 dotnet build src\PCL2Unlock
-
-# 2. 先确认版本匹配（只读；已解锁返回 0，未解锁返回 2，版本不匹配返回 3）
 dotnet run --project src\PCL2Unlock -- "D:\PCL2\Plain Craft Launcher 2.exe" --check
-
-# 3. 打补丁，默认输出 <输入名>.unlocked.exe
 dotnet run --project src\PCL2Unlock -- "D:\PCL2\Plain Craft Launcher 2.exe"
-
-# 4. 复核输出
-dotnet run --project src\PCL2Unlock -- "D:\PCL2\Plain Craft Launcher 2.unlocked.exe" --check
 ```
 
-## 参数
+工具参数：`-o/--output` 输出路径，`--only 1,2,3` 选补丁，`-c/--check` 只检查不写文件。
+退出码：`0` 成功，`2` 未解锁，`3` 版本不匹配（不写文件）。
 
-| 参数 | 说明 |
+## 需要的工具
+
+| 工具 | 说明 |
 |---|---|
-| `-o, --output <路径>` | 输出文件，默认 `<输入名>.unlocked.exe`（脚本里默认 `dist/<输入名>.unlocked.exe`） |
-| `--only 1,2,3` | 只跑指定补丁：1 = 本体下载，2 = 整合包分派，3 = 整合包按钮 |
-| `-c, --check` | 只检查是否已解锁，不写文件 |
-| `-h, --help` | 显示帮助 |
+| .NET SDK 8+ | 构建补丁工具，[下载](https://dotnet.microsoft.com/download) |
+| dnlib 4.4.0 | 首次构建自动从 NuGet 还原 |
+| Windows PowerShell 5.1 | Windows 10 / 11 自带 |
 
-脚本参数名对应关系：`.ps1` / `.bat` 用 `-InputExe`、`-Output`、`-Only`、`-Check`，工具本身用 `--output`、`--only`、`--check`。
+## 改了什么
 
-退出码：`0` 成功 / 已解锁，`1` 参数或文件问题，`2` 检查发现未解锁，`3` 找不到目标代码（版本不匹配，此时不会写出文件）。
-
-补丁是**幂等**的：对已经解锁过的文件再跑一次会全部跳过，输出与输入字节一致。
-
-## 补丁做了什么
-
-### 1. 接回真实的版本列表加载器
-
-```diff
-- PageLoaderInit(LoadMinecraft, PanLoad, PanAllBack, null,
--     new LoaderTask<string, DlClientListResult>("关闭下载", task => { throw new Exception("为遵守相关法律法规……"); }),
--     task => LoadMinecraft_OnFinish());
-+ PageLoaderInit(LoadMinecraft, PanLoad, PanAllBack, null,
-+     ModDownload.DlClientListLoader,
-+     task => LoadMinecraft_OnFinish());
-```
-
-IL 层面：把「假加载器」的构造区间（13 条指令）整体换成一条 `ldsfld ModDownload::DlClientListLoader`。
-`LoadMinecraft_OnFinish()` 本来就从 `DlClientListLoader.Output["versions"]` 取列表，接回去即可。
-
-### 2. 补回整合包类型分派
-
-原方法识别完包类型就 `throw`，分派表被删。这里新增一个静态方法，并把末尾的 `throw` 换成「分派 + 返回」：
-
-```csharp
-public static LoaderCombo<string> ModpackInstallDispatch(
-    string File, ZipArchive Archive, string BaseFolder, int Kind, string InstanceName, string Logo)
-    => Kind switch
-    {
-        0 => InstallPackCurseForge(File, Archive, BaseFolder, InstanceName, Logo),
-        1 => InstallPackHMCL(File, Archive, BaseFolder),
-        2 => InstallPackMMC(File, Archive, BaseFolder),
-        3 => InstallPackMCBBS(File, Archive, BaseFolder, InstanceName),
-        4 => InstallPackModrinth(File, Archive, BaseFolder, InstanceName, Logo),
-        9 => InstallPackLauncherPack(File, Archive, BaseFolder),
-        _ => InstallPackCompress(File, Archive),
-    };
-```
-
-`Kind` 就是原方法里那套残留识别逻辑写下的 `num`（清单文件 → 编号），补丁没有改动它，只补了后续分派：
-
-| num | 判据 | 安装器 |
+| # | 位置 | 原来 |
 |---|---|---|
-| 0 | `manifest.json` 且无 `addons` | CurseForge |
-| 1 | `modpack.json` | HMCL |
-| 2 | `mmc-pack.json` | MultiMC / Prism |
-| 3 | `mcbbs.packmeta`，或 `manifest.json` 带 `addons` | MCBBS |
-| 4 | `modrinth.index.json` | Modrinth |
-| 9 | 嵌套的 `modpack.zip` / `modpack.mrpack` | 启动器包 |
-| 其它 | — | 纯压缩包 |
+| 1 | `PageDownloadInstall.LoaderInit()` | 真加载器被换成抛异常的「关闭下载」假加载器 → 下载页报错 |
+| 2 | `ModModpack.ModpackInstall(File, …)` | 识别完包类型后无条件 `throw`，分派到各安装器的逻辑被删 |
+| 3 | `ModModpack.ModpackInstall()` | 只剩一句「暂时不再提供 MC 下载功能」的提示 |
 
-实现细节：原方法的 `throw` 三条指令保留为不可达填充（它同时是 `try/finally` 的边界），分派代码插在它前面并用 `leave` 跳出；追加的 `ret` 之前要把 `finally` 的 `HandlerEnd` 钉住，否则 `leave` 会落进异常处理区间，CLR 直接判无效 IL。
-
-### 3. 还给按钮一个文件选择框
-
-无参入口原本应该是「弹框 → 调三参重载」。补丁内联重建了整个方法体：
-
-```csharp
-public static void ModpackInstall()
-{
-    string text = Dialogs.SelectFile("选择整合包文件", false, null,
-        (OneOf<IEnumerable<(string[], string)>, string>?)("整合包", new[] { "zip", "mrpack", "rar" }))
-        .FirstOrDefault();
-    if (!string.IsNullOrEmpty(text)) ModpackInstall(text);
-}
-```
-
-泛型实例化（`ValueTuple<string[], string>`、`OneOf<…>`、`Nullable<OneOf<…>>`、`Enumerable.FirstOrDefault<string>`）不手搓签名，直接从程序集里已有的同类调用点回收成员引用，避免写错元数据。
-
-## 验证
-
-```bat
-ilspycmd -t PCL.PageDownloadInstall PCL2.unlocked.exe   # LoaderInit 里应是 ModDownload.DlClientListLoader
-ilspycmd -t PCL.ModModpack PCL2.unlocked.exe            # 应有 ModpackInstallDispatch；无参重载应是 SelectFile + ModpackInstall(text)
-ilspycmd --list-resources PCL2.unlocked.exe             # 资源表与原版逐条一致
-```
-
-运行侧：
-
-- 「下载 → 游戏本体」应出现 正式版 / 预览版 / 远古版 / 愚人节版 分组列表，日志出现 `DlClientList Main 状态改变：Finished`；
-- 选版本 → 开始安装，任务栏出现 `<名字> 安装`、`下载原版 <版本>`；
-- 「安装整合包」按钮弹框，选中后任务栏出现 `CurseForge/Modrinth/HMCL/MMC/MCBB 整合包安装：<名字>`。
-
-## 已知限制
-
-- 补丁只按 PCL2 2.13.1 的代码结构编写，换版本请先 `--check`，定位不到目标代码时会中止并且不写出文件；
-- 只恢复入口接线，不改下载源、不改版本校验、不改变任何下载与安装逻辑；
-- 输出为新文件，原 exe 不受影响；补丁可重复执行，已解锁的部分会自动跳过。
+补丁只恢复接线，不改下载源、不改版本校验、不改变任何下载/安装逻辑；输出为新文件，原 exe 不动，重复执行会自动跳过已解锁的部分。
 
 ## 许可
 
