@@ -217,7 +217,8 @@ public sealed class Pcl2Patcher
         });
         type.Methods.Add(dispatch);
 
-        // 分派 + 返回；原 throw 三条指令留作不可达填充，避免破坏 try/catch/finally 的边界。
+        // 关键：识别逻辑里 15 条 leave 全都直接跳到这条 ldstr（它同时是内层 catch 的 HandlerEnd），
+        // 所以分派代码必须原地替换这条指令，而不是插在它前面——插在前面会落进 catch 处理器内部而不可达。
         var retLabel = Instruction.Create(OpCodes.Ldloc, body.Variables[0]);
 
         var injected = new List<Instruction>
@@ -233,10 +234,37 @@ public sealed class Pcl2Patcher
             Instruction.Create(OpCodes.Leave, retLabel),
         };
 
+        // 分派块插在 throw 三连之前，然后把所有指向那条 ldstr 的引用（15 条 leave、
+        // 内层 catch 的 HandlerEnd）改指到分派块的第一条指令；throw 三连留作不可达填充。
+        var oldTarget = instructions[throwStart];
         int at = throwStart;
         foreach (var instruction in injected)
         {
             instructions.Insert(at++, instruction);
+        }
+
+        var newTarget = injected[0];
+        foreach (var instruction in instructions)
+        {
+            if (ReferenceEquals(instruction.Operand, oldTarget))
+            {
+                instruction.Operand = newTarget;
+            }
+        }
+
+        // 自检：分派块必须至少被一条分支指向，否则说明重定向没生效（补丁会变成死代码）。
+        if (!instructions.Any(i => ReferenceEquals(i.Operand, newTarget)))
+        {
+            throw new InvalidOperationException("分派块没有被任何分支指向，补丁 2 未生效");
+        }
+
+        foreach (var handler in body.ExceptionHandlers)
+        {
+            if (ReferenceEquals(handler.TryStart, oldTarget)) handler.TryStart = newTarget;
+            if (ReferenceEquals(handler.TryEnd, oldTarget)) handler.TryEnd = newTarget;
+            if (ReferenceEquals(handler.HandlerStart, oldTarget)) handler.HandlerStart = newTarget;
+            if (ReferenceEquals(handler.HandlerEnd, oldTarget)) handler.HandlerEnd = newTarget;
+            if (ReferenceEquals(handler.FilterStart, oldTarget)) handler.FilterStart = newTarget;
         }
 
         instructions.Add(retLabel);
