@@ -339,6 +339,23 @@ public sealed class Pcl2Patcher
         var blocks = new List<Instruction>();
         foreach (var (kind, target, args, log) in cases)
         {
+            if (args.Length != target.Parameters.Count)
+            {
+                throw new InvalidOperationException(
+                    $"{target.Name} 需要 {target.Parameters.Count} 个参数，分派只给了 {args.Length} 个");
+            }
+
+            for (int a = 0; a < args.Length; a++)
+            {
+                var expected = target.Parameters[a].Type.FullName;
+                var actual = dispatch.Parameters[args[a]].Type.FullName;
+                if (expected != actual)
+                {
+                    throw new InvalidOperationException(
+                        $"{target.Name} 第 {a + 1} 个参数类型是 {expected}，分派给的是 {actual}");
+                }
+            }
+
             var first = Instruction.Create(OpCodes.Ldstr, log);
             switchTargets[kind] = first;
             blocks.Add(first);
@@ -375,6 +392,7 @@ public sealed class Pcl2Patcher
         }
 
         body.UpdateInstructionOffsets();
+        IlVerifier.AssertBalanced(body, DispatchMethodName, 1);
         return dispatch;
     }
 
@@ -419,7 +437,7 @@ public sealed class Pcl2Patcher
         entry.Body = body;
 
         var il = body.Instructions;
-        var afterDialog = Instruction.Create(OpCodes.Ldloc, fileVariable);
+        var afterDialog = Instruction.Create(OpCodes.Newobj, (IMethod)closureCtor);
 
         void Add(Instruction instruction) => il.Add(instruction);
 
@@ -459,7 +477,6 @@ public sealed class Pcl2Patcher
 
         // new Action(closure._Lambda$__0) 交给 ModBase.RunInThread
         il.Add(afterDialog);
-        Add(Instruction.Create(OpCodes.Newobj, (IMethod)closureCtor));
         Add(Instruction.Create(OpCodes.Dup));
         Add(Instruction.Create(OpCodes.Ldloc, fileVariable));
         Add(Instruction.Create(OpCodes.Stfld, (IField)closureField));
@@ -469,6 +486,7 @@ public sealed class Pcl2Patcher
         Add(Instruction.Create(OpCodes.Ret));
 
         body.UpdateInstructionOffsets();
+        IlVerifier.AssertBalanced(body, "ModpackInstall()", 0);
         return PatchOutcome.Applied;
     }
 
