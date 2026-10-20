@@ -130,7 +130,7 @@ ilspycmd --list-resources PCL2.unlocked.exe             # 资源表与原版逐�
 
 运行侧：
 
-- 「下载 → 游戏本体」应出现 正式版 / 预览版 / 远古版 / 愚人节版 分组列表，日志出现 `加载器 LoaderTask\`2 DlClientList Main 状态改变：Finished`；
+- 「下载 → 游戏本体」应出现 正式版 / 预览版 / 远古版 / 愚人节版 分组列表，日志出现 `DlClientList Main 状态改变：Finished`；
 - 选版本 → 开始安装，任务栏出现 `<名字> 安装`、`下载原版 <版本>`；
 - 「安装整合包」按钮弹框，选中后任务栏出现 `CurseForge/Modrinth/HMCL/MMC/MCBB 整合包安装：<名字>`。
 
