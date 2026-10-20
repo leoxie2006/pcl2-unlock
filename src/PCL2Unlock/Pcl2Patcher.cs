@@ -32,6 +32,7 @@ public sealed class Pcl2Patcher
     private const string BannedMessage = "为遵守相关法律法规";
     private const string FakeLoaderName = "关闭下载";
     private const string DispatchMethodName = "ModpackInstallDispatch";
+    private const string ModModpackSourcePath = "E:\\Projects\\PCL\\本体代码\\Plain Craft Launcher 2\\Modules\\Minecraft\\ModModpack.vb";
 
     private readonly ModuleDef _module;
 
@@ -73,7 +74,8 @@ public sealed class Pcl2Patcher
 
         var instructions = entry.Body.Instructions;
         bool hasSelectFile = instructions.Any(i => i.OpCode.Code == Code.Call && i.Operand is IMethod m && m.Name == "SelectFile");
-        if (!hasSelectFile)
+        bool hasRunInThread = instructions.Any(i => i.OpCode.Code == Code.Call && i.Operand is IMethod m && m.Name == "RunInThread");
+        if (!hasSelectFile || !hasRunInThread)
         {
             return false;
         }
@@ -206,14 +208,17 @@ public sealed class Pcl2Patcher
         var mLauncherPack = FindInstaller("InstallPackLauncherPack", 3);
         var mCompress = FindInstaller("InstallPackCompress", 2);
 
-        var dispatch = BuildDispatchMethod(install, mCompress, new[]
+        var loggerInfo = new ExistingMembers(_module).LoggerInfo
+            ?? throw new InvalidOperationException("找不到 Logger.Info 引用");
+
+        var dispatch = BuildDispatchMethod(install, mCompress, loggerInfo, new[]
         {
-            (Kind: 0, Target: mCurseForge, Args: new[] { 0, 1, 2, 4, 5 }),
-            (Kind: 1, Target: mHmcl, Args: new[] { 0, 1, 2 }),
-            (Kind: 2, Target: mMmc, Args: new[] { 0, 1, 2 }),
-            (Kind: 3, Target: mMcbbs, Args: new[] { 0, 1, 2, 4 }),
-            (Kind: 4, Target: mModrinth, Args: new[] { 0, 1, 2, 4, 5 }),
-            (Kind: 9, Target: mLauncherPack, Args: new[] { 0, 1, 2 }),
+            (Kind: 0, Target: mCurseForge, Args: new[] { 0, 1, 2, 4, 5 }, Log: "整合包种类：CurseForge"),
+            (Kind: 1, Target: mHmcl, Args: new[] { 0, 1, 2 }, Log: "整合包种类：HMCL"),
+            (Kind: 2, Target: mMmc, Args: new[] { 0, 1, 2 }, Log: "整合包种类：MMC"),
+            (Kind: 3, Target: mMcbbs, Args: new[] { 0, 1, 2, 4 }, Log: "整合包种类：MCBBS"),
+            (Kind: 4, Target: mModrinth, Args: new[] { 0, 1, 2, 4, 5 }, Log: "整合包种类：Modrinth"),
+            (Kind: 9, Target: mLauncherPack, Args: new[] { 0, 1, 2 }, Log: "整合包种类：带启动器的压缩包"),
         });
         type.Methods.Add(dispatch);
 
@@ -298,7 +303,8 @@ public sealed class Pcl2Patcher
     private static MethodDef BuildDispatchMethod(
         MethodDef install,
         MethodDef compress,
-        IEnumerable<(int Kind, MethodDef Target, int[] Args)> cases)
+        IMethod loggerInfo,
+        IEnumerable<(int Kind, MethodDef Target, int[] Args, string Log)> cases)
     {
         var module = install.Module;
         var signature = MethodSig.CreateStatic(
@@ -331,11 +337,15 @@ public sealed class Pcl2Patcher
         body.Instructions.Add(defaultStart);
 
         var blocks = new List<Instruction>();
-        foreach (var (kind, target, args) in cases)
+        foreach (var (kind, target, args, log) in cases)
         {
-            var first = Instruction.Create(OpCodes.Ldarg, dispatch.Parameters[args[0]]);
+            var first = Instruction.Create(OpCodes.Ldstr, log);
             switchTargets[kind] = first;
             blocks.Add(first);
+            blocks.Add(Instruction.Create(OpCodes.Ldc_I4_0));                       // LogBehavior.Info
+            blocks.Add(Instruction.Create(OpCodes.Ldstr, ModModpackSourcePath));
+            blocks.Add(Instruction.Create(OpCodes.Call, loggerInfo));
+            blocks.Add(Instruction.Create(OpCodes.Ldarg, dispatch.Parameters[args[0]]));
 
             foreach (int arg in args.Skip(1))
             {
@@ -347,6 +357,10 @@ public sealed class Pcl2Patcher
         }
 
         // 默认分支：没有清单文件的纯压缩包
+        body.Instructions.Add(Instruction.Create(OpCodes.Ldstr, "整合包种类：未能识别，假定为压缩包"));
+        body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I4_0));
+        body.Instructions.Add(Instruction.Create(OpCodes.Ldstr, ModModpackSourcePath));
+        body.Instructions.Add(Instruction.Create(OpCodes.Call, loggerInfo));
         body.Instructions.Add(Instruction.Create(OpCodes.Ldarg, dispatch.Parameters[1]));
         body.Instructions.Add(Instruction.Create(OpCodes.Call, compress));
         body.Instructions.Add(Instruction.Create(OpCodes.Ret));
@@ -375,29 +389,27 @@ public sealed class Pcl2Patcher
     {
         var type = FindType("PCL.ModModpack");
         var entry = type?.Methods.FirstOrDefault(m => m.Name == "ModpackInstall" && m.Parameters.Count == 0);
-        var install = type?.Methods.FirstOrDefault(m => m.Name == "ModpackInstall" && m.Parameters.Count == 3);
-        if (entry == null || install == null)
+        if (entry == null || type.Methods.All(m => !(m.Name == "ModpackInstall" && m.Parameters.Count == 3)))
         {
             return PatchOutcome.NotFound;
         }
 
-        // 泛型实例化不手搓签名，直接从程序集里已有的调用点复用成员引用。
+        // 与官方旧版本保持一致：标题「选择整合包压缩文件」、过滤器 "整合包文件"(rar/zip/mrpack)、
+        // 选完丢到后台线程执行（残留的闭包 _Closure$__0-0 里就是原版的 try/catch + 日志）。
         var members = new ExistingMembers(_module);
 
-        var tupleCtor = members.TupleCtor
-            ?? throw new InvalidOperationException("找不到 ValueTuple<string[], string> 的构造引用");
-        var tupleStelem = members.TupleStelem
-            ?? throw new InvalidOperationException("找不到 ValueTuple<string[], string> 的 stelem 引用");
-        var oneOfImplicit = members.OneOfImplicit
-            ?? throw new InvalidOperationException("找不到 OneOf 的 op_Implicit 引用");
-        var nullableCtor = members.NullableCtor
-            ?? throw new InvalidOperationException("找不到 Nullable<OneOf> 的构造引用");
-        var selectFile = members.SelectFile
-            ?? throw new InvalidOperationException("找不到 Dialogs.SelectFile 引用");
-        var firstOrDefault = members.FirstOrDefaultString
-            ?? throw new InvalidOperationException("找不到 Enumerable.FirstOrDefault<string> 引用");
-        var isNullOrEmpty = members.IsNullOrEmpty
-            ?? throw new InvalidOperationException("找不到 string.IsNullOrEmpty 引用");
+        var tupleCtor = members.TupleCtor ?? throw new InvalidOperationException("找不到 ValueTuple<string[], string> 的构造引用");
+        var tupleStelem = members.TupleStelem ?? throw new InvalidOperationException("找不到 ValueTuple<string[], string> 的 stelem 引用");
+        var oneOfImplicit = members.OneOfImplicit ?? throw new InvalidOperationException("找不到 OneOf 的 op_Implicit 引用");
+        var nullableCtor = members.NullableCtor ?? throw new InvalidOperationException("找不到 Nullable<OneOf> 的构造引用");
+        var selectFile = members.SelectFile ?? throw new InvalidOperationException("找不到 Dialogs.SelectFile 引用");
+        var firstOrDefault = members.FirstOrDefaultString ?? throw new InvalidOperationException("找不到 Enumerable.FirstOrDefault<string> 引用");
+        var isNullOrEmpty = members.IsNullOrEmpty ?? throw new InvalidOperationException("找不到 string.IsNullOrEmpty 引用");
+        var closureCtor = members.ClosureCtor ?? throw new InvalidOperationException("找不到 _Closure$__0-0 的构造引用");
+        var closureField = members.ClosureField ?? throw new InvalidOperationException("找不到 $VB$Local_File 字段");
+        var closureLambda = members.ClosureLambda ?? throw new InvalidOperationException("找不到 _Lambda$__0 方法");
+        var runInThread = members.RunInThread ?? throw new InvalidOperationException("找不到 ModBase.RunInThread 引用");
+        var actionCtor = members.ActionCtor ?? throw new InvalidOperationException("找不到 Action 的构造引用");
 
         entry.FreeMethodBody();
 
@@ -407,33 +419,32 @@ public sealed class Pcl2Patcher
         entry.Body = body;
 
         var il = body.Instructions;
-        var hasFile = Instruction.Create(OpCodes.Ldloc, fileVariable);
+        var afterDialog = Instruction.Create(OpCodes.Ldloc, fileVariable);
 
         void Add(Instruction instruction) => il.Add(instruction);
 
-        // Dialogs.SelectFile("选择整合包文件", false, null, 过滤器).FirstOrDefault()
-        Add(Instruction.Create(OpCodes.Ldstr, "选择整合包文件"));
+        Add(Instruction.Create(OpCodes.Ldstr, "选择整合包压缩文件"));
         Add(Instruction.Create(OpCodes.Ldc_I4_0));                                     // 单选
         Add(Instruction.Create(OpCodes.Ldnull));                                       // 起始目录
         Add(Instruction.Create(OpCodes.Ldc_I4_1));                                     // 一组过滤器
         Add(Instruction.Create(OpCodes.Newarr, (ITypeDefOrRef)tupleCtor.DeclaringType));
         Add(Instruction.Create(OpCodes.Dup));
         Add(Instruction.Create(OpCodes.Ldc_I4_0));
-        Add(Instruction.Create(OpCodes.Ldc_I4_3));                                     // 三个扩展名
+        Add(Instruction.Create(OpCodes.Ldc_I4_3));                                     // rar / zip / mrpack
         Add(Instruction.Create(OpCodes.Newarr, _module.CorLibTypes.String.ToTypeDefOrRef()));
         Add(Instruction.Create(OpCodes.Dup));
         Add(Instruction.Create(OpCodes.Ldc_I4_0));
-        Add(Instruction.Create(OpCodes.Ldstr, "zip"));
+        Add(Instruction.Create(OpCodes.Ldstr, "rar"));
         Add(Instruction.Create(OpCodes.Stelem_Ref));
         Add(Instruction.Create(OpCodes.Dup));
         Add(Instruction.Create(OpCodes.Ldc_I4_1));
-        Add(Instruction.Create(OpCodes.Ldstr, "mrpack"));
+        Add(Instruction.Create(OpCodes.Ldstr, "zip"));
         Add(Instruction.Create(OpCodes.Stelem_Ref));
         Add(Instruction.Create(OpCodes.Dup));
         Add(Instruction.Create(OpCodes.Ldc_I4_2));
-        Add(Instruction.Create(OpCodes.Ldstr, "rar"));
+        Add(Instruction.Create(OpCodes.Ldstr, "mrpack"));
         Add(Instruction.Create(OpCodes.Stelem_Ref));
-        Add(Instruction.Create(OpCodes.Ldstr, "整合包"));                               // 过滤器描述
+        Add(Instruction.Create(OpCodes.Ldstr, "整合包文件"));                           // 过滤器描述
         Add(Instruction.Create(OpCodes.Newobj, (IMethod)tupleCtor));
         Add(Instruction.Create(OpCodes.Stelem, (ITypeDefOrRef)tupleStelem));
         Add(Instruction.Create(OpCodes.Call, (IMethod)oneOfImplicit));
@@ -443,13 +454,18 @@ public sealed class Pcl2Patcher
         Add(Instruction.Create(OpCodes.Stloc, fileVariable));
         Add(Instruction.Create(OpCodes.Ldloc, fileVariable));
         Add(Instruction.Create(OpCodes.Call, (IMethod)isNullOrEmpty));
-        Add(Instruction.Create(OpCodes.Brfalse, hasFile));
+        Add(Instruction.Create(OpCodes.Brfalse, afterDialog));
         Add(Instruction.Create(OpCodes.Ret));                                          // 用户取消
-        il.Add(hasFile);
-        Add(Instruction.Create(OpCodes.Ldnull));                                       // InstanceName
-        Add(Instruction.Create(OpCodes.Ldnull));                                       // Logo
-        Add(Instruction.Create(OpCodes.Call, (IMethod)install));
-        Add(Instruction.Create(OpCodes.Pop));                                          // 安装器内部已 Start，丢弃返回值
+
+        // new Action(closure._Lambda$__0) 交给 ModBase.RunInThread
+        il.Add(afterDialog);
+        Add(Instruction.Create(OpCodes.Newobj, (IMethod)closureCtor));
+        Add(Instruction.Create(OpCodes.Dup));
+        Add(Instruction.Create(OpCodes.Ldloc, fileVariable));
+        Add(Instruction.Create(OpCodes.Stfld, (IField)closureField));
+        Add(Instruction.Create(OpCodes.Ldftn, (IMethod)closureLambda));
+        Add(Instruction.Create(OpCodes.Newobj, (IMethod)actionCtor));
+        Add(Instruction.Create(OpCodes.Call, (IMethod)runInThread));
         Add(Instruction.Create(OpCodes.Ret));
 
         body.UpdateInstructionOffsets();
@@ -482,6 +498,12 @@ public sealed class Pcl2Patcher
         public IMethod SelectFile { get; }
         public IMethod FirstOrDefaultString { get; }
         public IMethod IsNullOrEmpty { get; }
+        public MethodDef ClosureCtor { get; }
+        public FieldDef ClosureField { get; }
+        public MethodDef ClosureLambda { get; }
+        public IMethod RunInThread { get; }
+        public IMethod LoggerInfo { get; }
+        public IMethod ActionCtor { get; }
 
         public ExistingMembers(ModuleDef module)
         {
@@ -552,6 +574,35 @@ public sealed class Pcl2Patcher
                 .Where(i => i.OpCode.Code == Code.Call && i.Operand is IMethod m &&
                             m.Name == "IsNullOrEmpty" &&
                             m.DeclaringType?.FullName == "System.String")
+                .Select(i => (IMethod)i.Operand)
+                .FirstOrDefault();
+
+            // 原版无参入口就是 new Action(closure._Lambda$__0) 丢进 RunInThread，
+            // 闭包类还残留在程序集里，直接复用，省得自己造 try/catch。
+            var closure = module.GetTypes().FirstOrDefault(t =>
+                t.DeclaringType?.Name == "ModModpack" &&
+                t.Fields.Any(f => f.Name == "$VB$Local_File") &&
+                t.Methods.Any(m => m.Name == "_Lambda$__0"));
+
+            ClosureCtor = closure?.Methods.FirstOrDefault(m => m.Name == ".ctor");
+            ClosureField = closure?.Fields.FirstOrDefault(f => f.Name == "$VB$Local_File");
+            ClosureLambda = closure?.Methods.FirstOrDefault(m => m.Name == "_Lambda$__0");
+
+            RunInThread = instructions
+                .Where(i => i.OpCode.Code == Code.Call && i.Operand is IMethod m &&
+                            m.Name == "RunInThread" && m.DeclaringType?.Name == "ModBase")
+                .Select(i => (IMethod)i.Operand)
+                .FirstOrDefault();
+
+            ActionCtor = instructions
+                .Where(i => i.OpCode.Code == Code.Newobj && i.Operand is IMethod m &&
+                            m.DeclaringType?.FullName == "System.Action" && m.MethodSig.Params.Count == 2)
+                .Select(i => (IMethod)i.Operand)
+                .FirstOrDefault();
+
+            LoggerInfo = instructions
+                .Where(i => i.OpCode.Code == Code.Call && i.Operand is IMethod m &&
+                            m.Name == "Info" && m.DeclaringType?.Name == "Logger" && m.MethodSig.Params.Count == 3)
                 .Select(i => (IMethod)i.Operand)
                 .FirstOrDefault();
         }
