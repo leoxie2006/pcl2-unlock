@@ -1,0 +1,22 @@
+# 构建产物
+bin/
+obj/
+out/
+
+# 输入 / 输出样本：不要提交 PCL2 本体
+*.exe
+*.dll
+*.pdb
+*.log
+
+# 反编译与分析中间文件
+decompiled/
+*.il
+*.csproj.user
+
+# 运行时生成的目录
+PCL/
+.minecraft/
+
+# macOS
+.DS_Store
