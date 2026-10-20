@@ -66,8 +66,30 @@ public sealed class Pcl2Patcher
     private bool IsModpackInstallEntryUnlocked()
     {
         var entry = FindType("PCL.ModModpack")?.Methods.FirstOrDefault(m => m.Name == "ModpackInstall" && m.Parameters.Count == 0);
-        return entry is { HasBody: true } &&
-               entry.Body.Instructions.Any(i => i.OpCode.Code == Code.Call && i.Operand is IMethod m && m.Name == "SelectFile");
+        if (entry is not { HasBody: true })
+        {
+            return false;
+        }
+
+        var instructions = entry.Body.Instructions;
+        bool hasSelectFile = instructions.Any(i => i.OpCode.Code == Code.Call && i.Operand is IMethod m && m.Name == "SelectFile");
+        if (!hasSelectFile)
+        {
+            return false;
+        }
+
+        // 过滤器必须用 op_Implicit(!0) 这个「扩展名数组」重载；用成 !1（string）会在
+        // SelectFile 里抛 InvalidCastException，所以把用错重载的文件判定为未解锁。
+        return instructions
+            .Where(i => i.OpCode.Code == Code.Call && i.Operand is IMethod m &&
+                        m.Name == "op_Implicit" && m.DeclaringType?.Name == "OneOf`2")
+            .All(i =>
+            {
+                var method = (IMethod)i.Operand;
+                return method.MethodSig.Params.Count == 1 &&
+                       method.MethodSig.Params[0] is GenericVar typeVar &&
+                       typeVar.Number == 0;
+            });
     }
 
     // ───────────────────────────── 补丁 1 ─────────────────────────────
@@ -458,12 +480,24 @@ public sealed class Pcl2Patcher
                                          t.FullName == tupleType.FullName)?.Operand as ITypeDefOrRef;
             }
 
+            // 过滤器有两个重载：op_Implicit(!0) 收 IEnumerable<(string[] Extensions, string Display)>，
+            // op_Implicit(!1) 收 string。必须挑 !0 的那个——传错重载会把数组塞进 string 槽位，
+            // SelectFile 里 Is<string>() 误判为真，随后 As<string>() 抛 InvalidCastException。
             OneOfImplicit = instructions
                 .Where(i => i.OpCode.Code == Code.Call && i.Operand is IMethod m &&
                             m.Name == "op_Implicit" && m.DeclaringType?.Name == "OneOf`2" &&
                             m.DeclaringType.FullName.Contains("System.ValueTuple`2<System.String[],System.String>"))
                 .Select(i => (IMethod)i.Operand)
-                .FirstOrDefault();
+                .FirstOrDefault(m =>
+                {
+                    if (m.MethodSig.Params.Count != 1)
+                    {
+                        return false;
+                    }
+
+                    // !0 是类型泛型参数（GenericVar），!1 对应 string 重载
+                    return m.MethodSig.Params[0] is GenericVar typeVar && typeVar.Number == 0;
+                });
 
             NullableCtor = instructions
                 .Where(i => i.OpCode.Code == Code.Newobj && i.Operand is IMethod m &&

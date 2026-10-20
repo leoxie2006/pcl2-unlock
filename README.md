@@ -8,7 +8,7 @@ PCL2 的「MC 下载功能已关闭」只是把入口短路了，功能本身还
 
 ### 1. 直接用现成的
 
-`dist/PCL2.2.13.1.unlocked.exe` 是打好补丁的成品（SHA-256 `7e00108c92b92cabfcf70105cf3f40426f706ce0fc2e2da1afb5e5ef1e3b724c`），改名成 `Plain Craft Launcher 2.exe` 覆盖原文件即可。
+`dist/PCL2.2.13.1.unlocked.exe` 是打好补丁的成品（SHA-256 `f7824e5f67b0653d04df2b244e7780bfe8879c152de62d05c2fb1d418588b45c`），改名成 `Plain Craft Launcher 2.exe` 覆盖原文件即可。
 
 ### 2. 跑脚本
 
