@@ -3,11 +3,14 @@ bin/
 obj/
 out/
 
-# 输入 / 输出样本：不要提交 PCL2 本体
+# 输入样本：PCL2 原版 exe 不提交
 *.exe
 *.dll
 *.pdb
 *.log
+
+# 例外：dist/ 里保留一份已经解锁好的成品
+!dist/*.unlocked.exe
 
 # 反编译与分析中间文件
 decompiled/

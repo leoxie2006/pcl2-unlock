@@ -10,7 +10,7 @@ PCL2 的「MC 下载功能已关闭」**只是被短路，并没有删除**。�
 
 ## 被改成了什么样
 
-官方在某次更新里把下载入口关掉，提示语是：
+官方在更新里把下载入口关掉，提示语是：
 
 ```
 为遵守相关法律法规，PCL 暂时不再提供 MC 下载功能，非常抱歉 qwq……
@@ -28,32 +28,98 @@ PCL2 的「MC 下载功能已关闭」**只是被短路，并没有删除**。�
 
 `ModDownload.DlClientListLoader`（仍请求 `launchermeta.mojang.com` / BMCLAPI 镜像）、`ModDownloadLib.McDownloadClientLoader`、`McInstallLoadersGet`、`McInstallStart`、`McInstallCommit`、`McDownloadForgelikeLoader`、`ShowMinecraftVersionList`、`BtnStart_Click`、7 个 `InstallPack*`。
 
-## 用法
+## 需要的工具
 
-需要 .NET SDK 8 及以上（项目目标是 `net10.0`，改 `TargetFramework` 即可降级）。dnlib 纯托管，跨平台均可运行。
+| 工具 | 用途 | 获取方式 |
+|---|---|---|
+| .NET SDK **8 或更高** | 构建并运行补丁工具 | <https://dotnet.microsoft.com/download> |
+| dnlib 4.4.0 | 读写 .NET 元数据 / IL | NuGet 自动还原，无需手动安装 |
+| PCL2 2.13.1 原版 exe | 补丁输入 | 官方渠道下载，文件名通常是 `Plain Craft Launcher 2.exe` |
+| Git（可选） | 拉取本仓库 | <https://git-scm.com/downloads> |
+| ilspycmd（可选） | 反编译核对补丁结果 | `dotnet tool install --global ilspycmd` |
+
+验证环境：`dotnet --version` 应输出 `8.x` 及以上；首次构建会联网还原 dnlib。
+
+## 快速开始
+
+三种方式任选其一。**补丁生成的是新文件，原 exe 不会被修改**，但用之前仍建议先备份原 exe。
+
+### 方式 A：直接用已经解锁好的文件
+
+`dist/` 里放了一份由 PCL2 2.13.1 原版打好全部三处补丁的成品：
+
+| 文件 | 大小 | SHA-256 |
+|---|---|---|
+| `dist/PCL2.2.13.1.unlocked.exe` | 5,972,992 字节 | `7e00108c92b92cabfcf70105cf3f40426f706ce0fc2e2da1afb5e5ef1e3b724c` |
+
+校验：
+
+```bash
+shasum -a 256 dist/PCL2.2.13.1.unlocked.exe              # macOS / Linux
+certutil -hashfile dist\PCL2.2.13.1.unlocked.exe SHA256  # Windows CMD
+```
+
+哈希一致后，把它改名为 `Plain Craft Launcher 2.exe` 覆盖原文件，或直接双击运行即可。
+这份成品对应 PCL2 **2.13.1（2.99.0.0(413)）**；版本不一致请用方式 B / C 现打一份。
+
+### 方式 B：一键脚本
+
+```bash
+# macOS / Linux / WSL / Git Bash
+./scripts/unlock.sh "Plain Craft Launcher 2.exe"
+
+# Windows PowerShell
+.\scripts\unlock.ps1 -InputExe "D:\PCL2\Plain Craft Launcher 2.exe"
+```
+
+不传参数时，脚本会自动在当前目录和项目根目录里找 `Plain Craft Launcher 2.exe` / `PCL2.exe`，然后依次：
+
+1. 检查 `dotnet` 是否存在、版本是否够用；
+2. `dotnet build` 构建补丁工具（首次会还原 dnlib）；
+3. 运行补丁，输出到 `dist/<输入名>.unlocked.exe`；
+4. 对输出文件跑一次 `--check`，确认三处都已解锁；
+5. 打印 SHA-256 与输出路径。
+
+两个脚本都支持把补丁工具的其余参数透传下去：
+
+```bash
+./scripts/unlock.sh PCL2.exe --only 1             # 只补「本体下载」
+./scripts/unlock.sh PCL2.exe -o ~/PCL2.new.exe    # 自定义输出路径
+./scripts/unlock.sh PCL2.exe --check              # 只检查，不写文件
+
+.\scripts\unlock.ps1 -Only 1
+.\scripts\unlock.ps1 -Output D:\PCL2\PCL2.new.exe
+.\scripts\unlock.ps1 -Check
+```
+
+### 方式 C：手动命令
 
 ```bash
 # 1. 构建
 dotnet build src/PCL2Unlock
 
-# 2. 先看这个 exe 是否匹配（只读，已解锁返回 0，未解锁返回 2）
+# 2. 先确认版本匹配（只读；已解锁返回 0，未解锁返回 2，版本不匹配返回 3）
 dotnet run --project src/PCL2Unlock -- "Plain Craft Launcher 2.exe" --check
 
-# 3. 打补丁：默认输出 <输入名>.unlocked.exe
+# 3. 打补丁，默认输出 <输入名>.unlocked.exe
 dotnet run --project src/PCL2Unlock -- "Plain Craft Launcher 2.exe"
 
-# 只补其中一处；或自定义输出
-dotnet run --project src/PCL2Unlock -- PCL2.exe -o PCL2.unlocked.exe --only 1
+# 4. 复核输出
+dotnet run --project src/PCL2Unlock -- "Plain Craft Launcher 2.unlocked.exe" --check
 ```
+
+## 参数
 
 | 参数 | 说明 |
 |---|---|
-| `-o, --output <路径>` | 输出文件，默认 `<输入名>.unlocked.exe` |
-| `--only 1,2,3` | 只跑指定补丁 |
-| `-c, --check` | 只检查是否已解锁，不写文件（0 = 已解锁，2 = 未解锁，3 = 版本不匹配） |
-| `-h, --help` | 帮助 |
+| `-o, --output <路径>` | 输出文件，默认 `<输入名>.unlocked.exe`（脚本里默认 `dist/<输入名>.unlocked.exe`） |
+| `--only 1,2,3` | 只跑指定补丁：1 = 本体下载，2 = 整合包分派，3 = 整合包按钮 |
+| `-c, --check` | 只检查是否已解锁，不写文件 |
+| `-h, --help` | 显示帮助 |
 
-输出是**新文件**，原 exe 不动。补丁是幂等的：对已解锁的文件再跑一次会全部跳过，字节不变。
+退出码：`0` 成功 / 已解锁，`1` 参数或文件问题，`2` 检查发现未解锁，`3` 找不到目标代码（版本不匹配，此时不会写出文件）。
+
+补丁是**幂等**的：对已经解锁过的文件再跑一次会全部跳过，输出与输入字节一致。
 
 ## 补丁做了什么
 
@@ -90,7 +156,7 @@ public static LoaderCombo<string> ModpackInstallDispatch(
     };
 ```
 
-`Kind` 就是原方法里那套残留的识别逻辑写下的 `num`（清单文件 → 编号），补丁没有改动它，只补了后续分派：
+`Kind` 就是原方法里那套残留识别逻辑写下的 `num`（清单文件 → 编号），补丁没有改动它，只补了后续分派：
 
 | num | 判据 | 安装器 |
 |---|---|---|
